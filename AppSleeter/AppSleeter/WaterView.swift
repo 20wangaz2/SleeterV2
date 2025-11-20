@@ -10,12 +10,16 @@ struct WaterView: View
 {
     @EnvironmentObject var waterTracker: WaterTracker
     @State private var isEditing = false
-    private func hourLabel(_ hour: Int) -> String {
-        var h = hour
-        let suffix = h >= 12 ? "PM" : "AM"
-        if h == 0 { h = 12 }
-        let display = h > 12 ? h - 12 : h
-        return "\(display) \(suffix)"
+    @State private var wakeTime: Date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!
+    @State private var sleepTime: Date = Calendar.current.date(bySettingHour: 21, minute: 0, second: 0, of: Date())!
+    private func timeLabel(_ date: Date) -> String {
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let hour24 = comps.hour ?? 0
+        let minute = comps.minute ?? 0
+        let suffix = hour24 >= 12 ? "PM" : "AM"
+        let displayHour = hour24 % 12 == 0 ? 12 : hour24 % 12
+        let minuteStr = String(format: "%02d", minute)
+        return "\(displayHour):\(minuteStr) \(suffix)"
     }
     var body: some View
     {
@@ -36,7 +40,7 @@ struct WaterView: View
                 
                 Slider(
                     value: Binding(get: { waterTracker.targetLiters }, set: { waterTracker.targetLiters = $0 }),
-                    in: 3...5,
+                    in: 2.7...4,
                     step: 0.1
                 ) {
                     Text("Target Daily Water")
@@ -49,8 +53,14 @@ struct WaterView: View
                 }
                 .padding(.horizontal, 24)
 
+                VStack(spacing: 12) {
+                    DatePicker("Wake Up", selection: $wakeTime, displayedComponents: .hourAndMinute)
+                    DatePicker("Sleep", selection: $sleepTime, displayedComponents: .hourAndMinute)
+                }
+                .padding(.horizontal, 24)
+
                 Button("Schedule") {
-                    waterTracker.generateSchedule()
+                    waterTracker.generateSchedule(from: wakeTime, to: sleepTime)
                 }
                 .font(.headline)
                 .padding(.top, 12)
@@ -65,14 +75,14 @@ struct WaterView: View
                         ForEach(Array(waterTracker.schedule.enumerated()), id: \.element.id) { index, entry in
                             HStack(spacing: 12) {
                                 Button {
-                                    waterTracker.schedule[index].isCompleted.toggle()
+                                    waterTracker.toggleSlot(at: index)
                                 } label: {
                                     Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : "circle")
                                         .foregroundStyle(entry.isCompleted ? .green : .gray)
                                         .imageScale(.large)
                                 }
-                                Text(hourLabel(entry.hour))
-                                    .frame(width: 60, alignment: .leading)
+                                Text(timeLabel(entry.date))
+                                    .frame(width: 90, alignment: .leading)
                                 Spacer()
                                 Image(systemName: "drop.fill")
                                     .foregroundStyle(.cyan)
