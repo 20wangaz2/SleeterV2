@@ -13,4 +13,5 @@ struct Constants
     static let sleepLogo = "bed.double"
     static let workoutLogo = "figure.run"
     static let addWaterString = "Add Water Goal"
+    static let settingsLogo = "line.3.horizontal"
 }

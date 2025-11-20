@@ -7,10 +7,29 @@
 
 import SwiftUI
 import Charts
+import Combine
+
+final class WaterTracker: ObservableObject {
+    struct WaterSlot: Identifiable {
+        let id = UUID()
+        let hour: Int
+        let liters: Double
+        var isCompleted: Bool
+    }
+    @Published var targetLiters: Double = 3.0
+    @Published var schedule: [WaterSlot] = []
+    var consumedLiters: Double { schedule.filter { $0.isCompleted }.map { $0.liters }.reduce(0, +) }
+    var progress: Double { guard targetLiters > 0 else { return 0 }; return min(1, max(0, consumedLiters / targetLiters)) }
+    func generateSchedule() {
+        let hours = Array(9...21)
+        let perSlot = targetLiters / Double(hours.count)
+        schedule = hours.map { WaterSlot(hour: $0, liters: perSlot, isCompleted: false) }
+    }
+}
 
 struct HomeView: View
 {
-    @State private var waterPercentage = 0.46
+    @EnvironmentObject var waterTracker: WaterTracker
     @State private var sleepPercentage = 0.70
     struct WaterIntake: Identifiable { let id = UUID(); let day: String; let ml: Int }
     @State private var weeklyWater: [WaterIntake] = [
@@ -41,7 +60,7 @@ struct HomeView: View
             VStack(spacing: 24) {
             
                 
-                Gauge(value: waterPercentage) {
+                Gauge(value: waterTracker.progress) {
                   
                 }
                 currentValueLabel: {
@@ -49,7 +68,7 @@ struct HomeView: View
                         Image(systemName: "drop.fill")
                             .imageScale(.small)
                             .foregroundStyle(.cyan)
-                        Text("\(Int(waterPercentage * 100))%")
+                        Text("\(Int(waterTracker.progress * 100))%")
                             .font(.caption)
                             .bold()
                     }
@@ -75,7 +94,7 @@ struct HomeView: View
                 } minimumValueLabel: {
                     Text("Bad")
                         .font(.caption2)
-                        .foregroundStyle(.red)
+                           .foregroundStyle(.red)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 } maximumValueLabel: {
@@ -197,4 +216,5 @@ struct HomeView: View
 
 #Preview {
     HomeView()
+        .environmentObject(WaterTracker())
 }

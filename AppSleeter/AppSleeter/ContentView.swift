@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var waterTracker = WaterTracker()
     var body: some View
     {
 
@@ -16,11 +17,13 @@ struct ContentView: View {
             Tab("Home", systemImage: Constants.homeLogo)
             {
                 HomeView()
+                    .environmentObject(waterTracker)
             }
             
             Tab("Water", systemImage: Constants.waterLogo )
             {
-                Text("Hello")
+                WaterView()
+                    .environmentObject(waterTracker)
             }
             
             Tab("Sleep", systemImage: Constants.sleepLogo)
@@ -31,6 +34,12 @@ struct ContentView: View {
             {
                 Text("Good Morning")
             }
+            
+            Tab("Workout", systemImage: Constants.settingsLogo)
+            {
+                Text("Settings")
+            }
+            
             
         }
         
