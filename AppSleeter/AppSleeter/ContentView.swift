@@ -35,10 +35,6 @@ struct ContentView: View {
                 Text("Good Morning")
             }
             
-            Tab("Workout", systemImage: Constants.settingsLogo)
-            {
-                Text("Settings")
-            }
             
             
         }
