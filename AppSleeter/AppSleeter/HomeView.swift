@@ -9,6 +9,117 @@ import SwiftUI
 import Charts
 import Combine
 import UserNotifications
+import UIKit
+#if canImport(FirebaseAuth)
+import FirebaseAuth
+#endif
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
+#if canImport(FirebaseFirestore)
+import FirebaseFirestore
+#endif
+#if canImport(FirebaseCore)
+import FirebaseCore
+#endif
+
+final class AuthManager: ObservableObject {
+    @Published var uid: String? = nil
+    @Published var displayName: String? = nil
+    @Published var photoURL: URL? = nil
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for scene in scenes {
+            if let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
+                var top: UIViewController? = root
+                while let presented = top?.presentedViewController { top = presented }
+                return top
+            }
+        }
+        return nil
+    }
+    private func ensureGIDConfig() {
+        #if canImport(GoogleSignIn)
+        if GIDSignIn.sharedInstance.configuration == nil {
+            let iosClient = "982360724962-273u0mnm55m1uebcf3ao4gnm72a7b747.apps.googleusercontent.com"
+            var clientID: String? = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String
+            #if canImport(FirebaseCore)
+            if clientID == nil { clientID = FirebaseApp.app()?.options.clientID }
+            #endif
+            let idToUse = clientID ?? iosClient
+            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: idToUse)
+        }
+        #endif
+    }
+    func signInWithGoogle() {
+        #if canImport(GoogleSignIn) && canImport(FirebaseAuth)
+        ensureGIDConfig()
+        guard let presentingVC = Self.topViewController() else { return }
+        GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC) { result, error in
+            guard error == nil, let result = result else { return }
+            let user = result.user
+            guard let idToken = user.idToken?.tokenString else { return }
+            let accessToken = user.accessToken.tokenString
+            let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
+            Auth.auth().signIn(with: credential) { authResult, error in
+                if let user = authResult?.user {
+                    self.uid = user.uid
+                    WeekSync.shared.uid = user.uid
+                    self.displayName = user.displayName ?? result.user.profile?.name
+                    if let url = result.user.profile?.imageURL(withDimension: 96) { self.photoURL = url } else { self.photoURL = user.photoURL }
+                }
+            }
+        }
+        #endif
+    }
+    func signOut() {
+        #if canImport(FirebaseAuth)
+        try? Auth.auth().signOut()
+        #endif
+        uid = nil
+        WeekSync.shared.uid = nil
+        displayName = nil
+        photoURL = nil
+    }
+}
+
+final class WeekSync: ObservableObject {
+    static let shared = WeekSync()
+    @Published var uid: String? = nil
+    func weekISO(_ date: Date) -> String { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: date) }
+    func saveWater(weekStart: Date, totals: [Int]) {
+        guard let u = uid else { return }
+        #if canImport(FirebaseFirestore)
+        let iso = weekISO(weekStart)
+        let db = Firestore.firestore()
+        db.collection("users").document(u).collection("weeks").document(iso).setData([
+            "weekStart": iso,
+            "waterTotalsML": totals
+        ], merge: true)
+        #endif
+    }
+    func saveSleep(weekStart: Date, hours: [Double]) {
+        guard let u = uid else { return }
+        #if canImport(FirebaseFirestore)
+        let iso = weekISO(weekStart)
+        let db = Firestore.firestore()
+        db.collection("users").document(u).collection("weeks").document(iso).setData([
+            "weekStart": iso,
+            "sleepHours": hours
+        ], merge: true)
+        #endif
+    }
+    func load(uid: String, weekISO: String, completion: @escaping ([String: Any]?) -> Void) {
+        #if canImport(FirebaseFirestore)
+        let db = Firestore.firestore()
+        db.collection("users").document(uid).collection("weeks").document(weekISO).getDocument { snap, _ in
+            completion(snap?.data())
+        }
+        #else
+        completion(nil)
+        #endif
+    }
+}
 
 final class WaterTracker: ObservableObject {
     struct WaterSlot: Identifiable {
@@ -22,7 +133,7 @@ final class WaterTracker: ObservableObject {
     @Published var wakeTime: Date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!
     @Published var sleepTime: Date = Calendar.current.date(bySettingHour: 21, minute: 0, second: 0, of: Date())!
     @Published var schedule: [WaterSlot] = []
-    @Published private(set) var weeklyTotalsML: [Int] = Array(repeating: 0, count: 7)
+    @Published var weeklyTotalsML: [Int] = Array(repeating: 0, count: 7)
     @Published private(set) var weekStart: Date = WaterTracker.mondayStart(for: Date())
     var consumedLiters: Double { schedule.filter { $0.isCompleted }.map { $0.liters }.reduce(0, +) }
     var progress: Double { guard targetLiters > 0 else { return 0 }; return min(1, max(0, consumedLiters / targetLiters)) }
@@ -100,6 +211,13 @@ final class WaterTracker: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.set(weekStart, forKey: "water.week.start")
         defaults.set(weeklyTotalsML, forKey: "water.week.totals")
+        WeekSync.shared.saveWater(weekStart: weekStart, totals: weeklyTotalsML)
+    }
+    func clearLocalWeek() {
+        weeklyTotalsML = Array(repeating: 0, count: 7)
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "water.week.start")
+        defaults.removeObject(forKey: "water.week.totals")
     }
     private static func mondayStart(for date: Date) -> Date {
         var cal = Calendar(identifier: .gregorian)
@@ -161,7 +279,15 @@ struct HomeView: View
 {
     @EnvironmentObject var waterTracker: WaterTracker
     @EnvironmentObject var sleepTracker: SleepTracker
-    @State private var sleepPercentage = 0.70
+    @EnvironmentObject var authManager: AuthManager
+    private var sleepPercentage: Double {
+        let h = todayHours
+        if h < 5 { return 0.25 }
+        if h >= 6 && h <= 7 { return 0.5 }
+        if h > 8 { return 1.0 }
+        if h > 7 { return 0.75 }
+        return 0.5
+    }
     @State private var selectedDayIndex: Int? = nil
     struct SleepEntry: Identifiable { let id = UUID(); let day: String; let hours: Int }
     var weeklySleepItems: [SleepEntry] {
@@ -169,13 +295,21 @@ struct HomeView: View
         return days.enumerated().map { SleepEntry(day: $1, hours: Int(round(sleepTracker.weeklySleepHours[$0]))) }
     }
     @State private var selectedSleepDay: String? = nil
+    private func sleepConditionLabel(_ hours: Int) -> String {
+        if hours < 5 { return "Poor" }
+        if hours >= 6 && hours <= 7 { return "Average" }
+        if hours > 8 { return "Excellent" }
+        if hours > 7 { return "Good" }
+        return "Average"
+    }
+    private var todayHours: Int {
+        Int(round(sleepTracker.weeklySleepHours[sleepTracker.indexForToday()]))
+    }
     
     var body: some View
     {
         ScrollView {
             VStack(spacing: 40) {
-            
-                
                 Gauge(value: waterTracker.progress) {
                   
                 }
@@ -202,7 +336,7 @@ struct HomeView: View
                         .font(.system(size: 24))
                         .foregroundColor(.brown)
                 } currentValueLabel: {
-                    Text("Average")
+                    Text(sleepConditionLabel(todayHours))
                         .font(.system(size: 18))
                         .bold()
                         .lineLimit(1)
@@ -282,7 +416,6 @@ struct HomeView: View
                         if selectedSleepDay == item.day {
                             Text("\(item.hours) h")
                                 .font(.caption2)
-                                .bold()
                         }
                     }
                 }
@@ -315,8 +448,69 @@ struct HomeView: View
             }
             .padding(.top, 100)
         }
-        
+        .onChange(of: authManager.uid) { oldValue, newValue in
+            let zeroWater = Array(repeating: 0, count: 7)
+            guard let u = newValue, !u.isEmpty else {
+                DispatchQueue.main.async {
+                    waterTracker.clearLocalWeek()
+                    sleepTracker.showBlankForSignedOut()
+                }
+                return
+            }
+            var cal = Calendar(identifier: .gregorian)
+            cal.firstWeekday = 2
+            let start = cal.dateInterval(of: .weekOfYear, for: Date())!.start
+            let iso = WeekSync.shared.weekISO(start)
+            WeekSync.shared.load(uid: u, weekISO: iso) { data in
+                let d = data ?? [:]
+                let totals = d["waterTotalsML"] as? [Int]
+                let hours = d["sleepHours"] as? [Double]
+                DispatchQueue.main.async {
+                    waterTracker.weeklyTotalsML = (totals?.count == 7) ? totals! : zeroWater
+                    sleepTracker.replaceWeekFromRemote(hours: (hours?.count == 7) ? hours! : Array(repeating: 0.0, count: 7))
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if let uid = authManager.uid, !uid.isEmpty {
+                    Menu {
+                        HStack(spacing: 8) {
+                            if let url = authManager.photoURL {
+                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Image(systemName: "person.crop.circle") }
+                                    .frame(width: 32, height: 32)
+                                    .clipShape(Circle())
+                            }
+                            Text(authManager.displayName ?? "Account")
+                                .font(.subheadline)
+                        }
+                        Button(role: .destructive) { authManager.signOut() } label: { Text("Sign out") }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if let url = authManager.photoURL {
+                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Image(systemName: "person.crop.circle") }
+                                    .frame(width: 24, height: 24)
+                                    .clipShape(Circle())
+                            } else {
+                                Image(systemName: "person.crop.circle")
+                            }
+                            Text(authManager.displayName ?? "Account")
+                                .font(.subheadline)
+                        }
+                    }
+                } else {
+                    Button { authManager.signInWithGoogle() } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                            Text("Sign in")
+                                .font(.subheadline)
+                        }
+                    }
+                }
+            }
+        }
     }
+
 }
 
 #Preview {

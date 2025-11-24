@@ -61,6 +61,16 @@ final class SleepTracker: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.set(weekStart, forKey: "sleep.week.start")
         defaults.set(weeklySleepHours, forKey: "sleep.week.hours")
+        WeekSync.shared.saveSleep(weekStart: weekStart, hours: weeklySleepHours)
+    }
+    func replaceWeekFromRemote(hours: [Double]) {
+        weeklySleepHours = hours.count == 7 ? hours : Array(repeating: 0, count: 7)
+    }
+    func showBlankForSignedOut() {
+        weeklySleepHours = Array(repeating: 0, count: 7)
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "sleep.week.start")
+        defaults.removeObject(forKey: "sleep.week.hours")
     }
     private static func mondayStart(for date: Date) -> Date {
         var cal = Calendar(identifier: .gregorian)

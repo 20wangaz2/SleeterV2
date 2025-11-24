@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var waterTracker = WaterTracker()
     @StateObject private var sleepTracker = SleepTracker()
+    @StateObject private var authManager = AuthManager()
     var body: some View
     {
 
@@ -17,9 +18,13 @@ struct ContentView: View {
         {
             Tab("Home", systemImage: Constants.homeLogo)
             {
-                HomeView()
-                    .environmentObject(waterTracker)
-                    .environmentObject(sleepTracker)
+                NavigationStack {
+                    HomeView()
+                        .environmentObject(waterTracker)
+                        .environmentObject(sleepTracker)
+                        .environmentObject(authManager)
+                        .navigationTitle("Home")
+                }
             }
             
             Tab("Water", systemImage: Constants.waterLogo )
