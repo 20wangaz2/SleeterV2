@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var waterTracker = WaterTracker()
+    @StateObject private var sleepTracker = SleepTracker()
     var body: some View
     {
 
@@ -18,21 +19,26 @@ struct ContentView: View {
             {
                 HomeView()
                     .environmentObject(waterTracker)
+                    .environmentObject(sleepTracker)
             }
             
             Tab("Water", systemImage: Constants.waterLogo )
             {
                 WaterView()
                     .environmentObject(waterTracker)
+                    .environmentObject(sleepTracker)
             }
             
             Tab("Sleep", systemImage: Constants.sleepLogo)
             {
-                Text("GoodEvening")
+                SleepView()
+                    .environmentObject(sleepTracker)
             }
             Tab("Workout", systemImage: Constants.workoutLogo)
             {
-                Text("Good Morning")
+                WorkoutView()
+                    .environmentObject(waterTracker)
+                    .environmentObject(sleepTracker)
             }
             
             

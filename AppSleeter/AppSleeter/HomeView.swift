@@ -14,11 +14,13 @@ final class WaterTracker: ObservableObject {
     struct WaterSlot: Identifiable {
         let id = UUID()
         let date: Date
-        let liters: Double
+        var liters: Double
         var isCompleted: Bool
     }
     struct WeeklyItem: Identifiable { let id = UUID(); let day: String; let ml: Int }
     @Published var targetLiters: Double = 3.0
+    @Published var wakeTime: Date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!
+    @Published var sleepTime: Date = Calendar.current.date(bySettingHour: 21, minute: 0, second: 0, of: Date())!
     @Published var schedule: [WaterSlot] = []
     @Published private(set) var weeklyTotalsML: [Int] = Array(repeating: 0, count: 7)
     @Published private(set) var weekStart: Date = WaterTracker.mondayStart(for: Date())
@@ -43,8 +45,14 @@ final class WaterTracker: ObservableObject {
             times.append(t)
             t = Calendar.current.date(byAdding: .hour, value: 1, to: t)!
         }
-        let perSlot = times.isEmpty ? 0 : targetLiters / Double(times.count)
-        schedule = times.map { WaterSlot(date: $0, liters: perSlot, isCompleted: false) }
+        let byDate = Dictionary(uniqueKeysWithValues: schedule.map { ($0.date, $0) })
+        let uncompletedTimes = times.filter { byDate[$0]?.isCompleted != true }
+        let remainingLiters = max(0, targetLiters - consumedLiters)
+        let perSlot = uncompletedTimes.isEmpty ? 0 : remainingLiters / Double(uncompletedTimes.count)
+        schedule = times.map { d in
+            if let old = byDate[d], old.isCompleted { return old }
+            else { return WaterSlot(date: d, liters: perSlot, isCompleted: false) }
+        }
         scheduleNotificationsForToday()
     }
     func toggleSlot(at index: Int) {
@@ -55,6 +63,7 @@ final class WaterTracker: ObservableObject {
         let todayIdx = indexForToday()
         weeklyTotalsML[todayIdx] = max(0, weeklyTotalsML[todayIdx] + (schedule[index].isCompleted ? delta : -delta))
         saveWeek()
+        rebalanceRemaining()
     }
     private func indexForToday() -> Int {
         let cal = Calendar(identifier: .gregorian)
@@ -115,7 +124,7 @@ final class WaterTracker: ObservableObject {
                 let todayPrefix = "water." + self.dateKey()
                 let ids = requests.filter { $0.identifier.hasPrefix(todayPrefix) }.map { $0.identifier }
                 center.removePendingNotificationRequests(withIdentifiers: ids)
-                for slot in self.schedule {
+                for slot in self.schedule where slot.date >= Date() && !slot.isCompleted {
                     let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: slot.date)
                     let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
                     let content = UNMutableNotificationContent()
@@ -128,23 +137,37 @@ final class WaterTracker: ObservableObject {
             }
         }
     }
+    func applyExtraLitersEvenly(_ extra: Double) {
+        ensureCurrentWeek()
+        guard extra > 0 else { return }
+        let indices = schedule.indices.filter { !schedule[$0].isCompleted }
+        guard !indices.isEmpty else { return }
+        let per = extra / Double(indices.count)
+        for i in indices { schedule[i].liters += per }
+        scheduleNotificationsForToday()
+    }
+    func rebalanceRemaining() {
+        ensureCurrentWeek()
+        let indices = schedule.indices.filter { !schedule[$0].isCompleted }
+        guard !indices.isEmpty else { return }
+        let remainingLiters = max(0, targetLiters - consumedLiters)
+        let per = remainingLiters / Double(indices.count)
+        for i in indices { schedule[i].liters = per }
+        scheduleNotificationsForToday()
+    }
 }
 
 struct HomeView: View
 {
     @EnvironmentObject var waterTracker: WaterTracker
+    @EnvironmentObject var sleepTracker: SleepTracker
     @State private var sleepPercentage = 0.70
     @State private var selectedDayIndex: Int? = nil
     struct SleepEntry: Identifiable { let id = UUID(); let day: String; let hours: Int }
-    @State private var weeklySleep: [SleepEntry] = [
-        .init(day: "Mon", hours: 7),
-        .init(day: "Tue", hours: 6),
-        .init(day: "Wed", hours: 8),
-        .init(day: "Thu", hours: 5),
-        .init(day: "Fri", hours: 7),
-        .init(day: "Sat", hours: 9),
-        .init(day: "Sun", hours: 8)
-    ]
+    var weeklySleepItems: [SleepEntry] {
+        let days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+        return days.enumerated().map { SleepEntry(day: $1, hours: Int(round(sleepTracker.weeklySleepHours[$0]))) }
+    }
     @State private var selectedSleepDay: String? = nil
     
     var body: some View
@@ -247,7 +270,7 @@ struct HomeView: View
                     }
                 }
                 
-                Chart(weeklySleep) { item in
+                Chart(weeklySleepItems) { item in
                     BarMark(
                         x: .value("Day", item.day),
                         y: .value("Hours", item.hours)

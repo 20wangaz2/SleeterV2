@@ -10,8 +10,8 @@ struct WaterView: View
 {
     @EnvironmentObject var waterTracker: WaterTracker
     @State private var isEditing = false
-    @State private var wakeTime: Date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!
-    @State private var sleepTime: Date = Calendar.current.date(bySettingHour: 21, minute: 0, second: 0, of: Date())!
+    @State private var startTime: Date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())!
+    @State private var endTime: Date = Calendar.current.date(bySettingHour: 21, minute: 0, second: 0, of: Date())!
     private func timeLabel(_ date: Date) -> String {
         let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
         let hour24 = comps.hour ?? 0
@@ -40,27 +40,27 @@ struct WaterView: View
                 
                 Slider(
                     value: Binding(get: { waterTracker.targetLiters }, set: { waterTracker.targetLiters = $0 }),
-                    in: 2.7...4,
+                    in: 2.0...3.9,
                     step: 0.1
                 ) {
                     Text("Target Daily Water")
                 } minimumValueLabel: {
-                    Text("2.7L")
+                    Text("2.0L")
                 } maximumValueLabel: {
-                    Text("4.0L")
+                    Text("3.9L")
                 } onEditingChanged: { editing in
                     isEditing = editing
                 }
                 .padding(.horizontal, 24)
 
                 VStack(spacing: 12) {
-                    DatePicker("Wake Up", selection: $wakeTime, displayedComponents: .hourAndMinute)
-                    DatePicker("Sleep", selection: $sleepTime, displayedComponents: .hourAndMinute)
+                    DatePicker("Start", selection: $startTime, displayedComponents: .hourAndMinute)
+                    DatePicker("End", selection: $endTime, displayedComponents: .hourAndMinute)
                 }
                 .padding(.horizontal, 24)
 
                 Button("Schedule") {
-                    waterTracker.generateSchedule(from: wakeTime, to: sleepTime)
+                    waterTracker.generateSchedule(from: startTime, to: endTime)
                 }
                 .font(.headline)
                 .padding(.top, 12)
